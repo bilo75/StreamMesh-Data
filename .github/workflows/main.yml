@@ -30,13 +30,13 @@ jobs:
             exit 0
           fi
           
-          # 4. JSON verilerini birleştir (Güncel liste + Firebase'den gelen yeni liste)
+          # 4. JSON verilerini birleştir (Dictionary nesnelerinden `.value` alınarak diziye basılır)
           jq -s '.[0] + (.[1] | to_entries | map(.value) | flatten)' current.json firebase_new.json > updated.json
           
-          # 5. Mükerrerleri ID kontrolüyle sil ve son dosyaya yaz
-          jq 'unique_by(.Id)' updated.json > channels.json
+          # 5. Mükerrerleri sil. (Firebase tarafında URL engellendi, emin olmak için GitHub'da da hem ID hem Url bazlı filtreliyoruz)
+          jq 'unique_by(.Url) | unique_by(.Id)' updated.json > channels.json
           
-          # 6. Firebase Havuzunu Sıfırla (Kanalları artık aldığımız için)
+          # 6. Firebase Havuzunu Sıfırla
           curl -X DELETE 'https://streammesh-p2p-default-rtdb.europe-west1.firebasedatabase.app/new_channels.json'
           
       - name: Commit and Push changes
@@ -44,5 +44,4 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git add channels.json
-          # Eğer dosyada değişiklik varsa Commit at ve Pushla
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Saatlik Firebase Senkronizasyonu" && git push)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Saatlik Firebase Senkronizasyonu (URL Hash Destekli)" && git push)
