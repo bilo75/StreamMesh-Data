@@ -3,42 +3,44 @@ name: Firebase to GitHub Sync
 on:
   schedule:
     - cron: '0 * * * *' # Her saat başı otomatik çalışır
-  workflow_dispatch: # Manuel olarak butona basıp çalıştırmana da izin verir
+  workflow_dispatch: # Manuel çalıştırmaya izin verir
+
+# GİTHUB BOTUNA DOSYA YAZMA İZNİ VERİYORUZ (128 HATASININ ÇÖZÜMÜ)
+permissions:
+  contents: write
 
 jobs:
   sync_channels:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # Git Push (yazma) işlemi için gerekli izin eklendi
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4 # v4 sürümüne güncellendi (Node uyarısını çözer)
+        uses: actions/checkout@v4
 
       - name: Fetch from Firebase and Update channels.json
         run: |
-          # 1. GitHub'daki mevcut channels.json'ı hazırla
+          # 1. Mevcut dosyayı hazırla
           if [ -f channels.json ]; then
             cat channels.json > current.json
           else
             echo "[]" > current.json
           fi
           
-          # 2. Firebase Havuzundan Yeni Eklenenleri Çek
+          # 2. Firebase'den çek
           curl -s 'https://streammesh-p2p-default-rtdb.europe-west1.firebasedatabase.app/new_channels.json' > firebase_new.json
           
-          # 3. Eğer havuz boşsa işlemi bitir (Boşa commit atma)
-          if [ "$(cat firebase_new.json)" == "null" ] || [ "$(cat firebase_new.json)" == "{}" ]; then
+          # 3. Havuz boşsa (veya sadece null/{} yazıyorsa) boşuna yorma
+          if [ ! -s firebase_new.json ] || [ "$(cat firebase_new.json)" == "null" ] || [ "$(cat firebase_new.json)" == "{}" ]; then
             echo "Firebase havuzunda yeni kanal yok. Çıkış yapılıyor."
             exit 0
           fi
           
-          # 4. JSON verilerini birleştir (Güncel liste + Firebase'den gelen yeni liste)
+          # 4. JSON Objelerini Düz Array'e çevir ve Birleştir
           jq -s '.[0] + (.[1] | to_entries | map(.value) | flatten)' current.json firebase_new.json > updated.json
           
-          # 5. Mükerrerleri ID kontrolüyle sil ve son dosyaya yaz
+          # 5. Mükerrerleri filtrele
           jq 'unique_by(.Id)' updated.json > channels.json
           
-          # 6. Firebase Havuzunu Sıfırla (Kanalları artık aldığımız için)
+          # 6. Firebase'i temizle (Posta kutusunu boşalt)
           curl -X DELETE 'https://streammesh-p2p-default-rtdb.europe-west1.firebasedatabase.app/new_channels.json'
           
       - name: Commit and Push changes
@@ -46,5 +48,4 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git add channels.json
-          # Eğer dosyada değişiklik varsa Commit at ve Pushla
           git diff --quiet && git diff --staged --quiet || (git commit -m "Saatlik Firebase Senkronizasyonu" && git push)
