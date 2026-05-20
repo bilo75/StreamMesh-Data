@@ -1,71 +1,24 @@
-name: Firebase to GitHub Sync
-
-on:
-  schedule:
-    - cron: '0 * * * *' # Her saat başı otomatik çalışır
-  workflow_dispatch: # Manuel çalıştırmaya izin verir
-
-# GİTHUB BOTUNA DOSYA YAZMA İZNİ VERİYORUZ
-permissions:
-  contents: write
-
-jobs:
-  sync_channels:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Fetch and Sync
-        run: |
-          # 1. Mevcut dosyayı denetle. Eğer dosya yoksa, boşsa veya hatalıysa varsayılan [] (boş dizi) yap.
-          if [ -s channels.json ] && grep -q '\[\|{' channels.json; then
-            cat channels.json > current.json
-          else
-            echo "[]" > current.json
-          fi
-          
-          # 2. Firebase'den çek
-          curl -s 'https://streammesh-p2p-default-rtdb.europe-west1.firebasedatabase.app/new_channels.json' > firebase_new.json
-          
-          # 3. İçi boş null değerini tespit edip engelleme
-          FIREBASE_CONTENT=$(cat firebase_new.json | tr -d '[:space:]')
-          if [ -z "$FIREBASE_CONTENT" ] || [ "$FIREBASE_CONTENT" == "null" ] || [ "$FIREBASE_CONTENT" == "{}" ]; then
-            echo "Firebase havuzunda yeni kanal yok. Çıkış yapılıyor."
-            echo "SKIP_COMMIT=true" >> $GITHUB_ENV
-            exit 0
-          fi
-          
-          # 4. Kırılmaz JSON Birleştirme (Gelen Array veya Object olsun umursamadan birleştirir)
-          jq -s '
-            (if (.[0] | type) == "array" then .[0] else [] end) as $curr |
-            (if (.[1] | type) == "object" then (.[1] | to_entries | map(.value))
-             elif (.[1] | type) == "array" then .[1]
-             else [] end) as $new |
-            ($curr + $new)
-          ' current.json firebase_new.json > updated.json || { echo "JSON Merge Hatası!"; exit 1; }
-          
-          # 5. Mükerrer kanalları ID'ye göre temizle
-          jq 'unique_by(.Id)' updated.json > channels.json || { echo "JSON Filtreleme Hatası!"; exit 1; }
-
-      - name: Commit and Push changes
+- name: Commit and Push changes
         if: env.SKIP_COMMIT != 'true'
         run: |
           git config --local user.name "github-actions[bot]"
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git add channels.json
           
-          # 6. Sadece gerçekten eklenen yeni kanal/değişiklik varsa Push yap!
+          # 7. Sadece değişiklik varsa Commit at
           if ! git diff --staged --quiet; then
             git commit -m "Saatlik Firebase Senkronizasyonu"
+            
+            # PUSH ETMEDEN ÖNCE GITHUB'DAKİ YENİ DEĞİŞİKLİKLERİ ÇEK/BİRLEŞTİR (1 Hatasının Çözümü)
+            git pull --rebase origin main
+            
             git push
             
-            # --- YALNIZCA GİTHUBA GÖNDERİM BAŞARILIYSA FİREBASE'İ TEMİZLE ---
+            # --- KRİTİK DÜZELTME BAŞLANGICI ---
+            # Firebase'i YALNIZCA GitHub'a gönderim 100% başarılı olduysa temizle!
             curl -X DELETE 'https://streammesh-p2p-default-rtdb.europe-west1.firebasedatabase.app/new_channels.json'
-            echo "Senkronizasyon başarılı, GitHub güncellendi ve Firebase havuzu boşaltıldı."
+            echo "Senkronizasyon başarılı, GitHub güncellendi ve Firebase boşaltıldı."
+            # --- KRİTİK DÜZELTME BİTİŞİ ---
           else
-            echo "Herhangi bir değişiklik bulunamadı (Tüm kanallar zaten mevcut), commit atlanıyor."
-            # Mükerrer veriler gelse de Firebase havuzunu yine de temizleyelim ki saat başı boşuna çalışmasın
-            curl -X DELETE 'https://streammesh-p2p-default-rtdb.europe-west1.firebasedatabase.app/new_channels.json'
-            echo "Yeni kanal değildi fakat Firebase'deki aynı veriler havuzdan temizlendi."
+            echo "Herhangi bir değişiklik bulunamadı, commit atlandı."
           fi
